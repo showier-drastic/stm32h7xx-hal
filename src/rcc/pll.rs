@@ -4,8 +4,8 @@ use super::{Rcc, HSI};
 use crate::stm32::RCC;
 use crate::time::Hertz;
 
-const FRACN_DIVISOR: f32 = 8192.0; // 2 ** 13
-const FRACN_MAX: f32 = FRACN_DIVISOR - 1.0;
+const FRACN_DIVISOR: u64 = 8192; // 2 ** 13
+const FRACN_MAX: u64 = FRACN_DIVISOR - 1;
 
 /// Strategies for configuring a Phase Locked Loop (PLL)
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -239,7 +239,7 @@ macro_rules! pll_setup {
                 let vco_ck = match pll.strategy {
                     PllConfigStrategy::Fractional => {
                         // Calculate FRACN
-                        let pll_x_fracn = calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output as f32);
+                        let pll_x_fracn = calc_fracn(ref_x_ck, pll_x_n, pll_x, output);
                         //RCC_PLL1FRACR
                         rcc.$pllXfracr.modify(|_, w| {
                             w.$fracnx().bits(pll_x_fracn)
@@ -253,7 +253,7 @@ macro_rules! pll_setup {
                     },
                     PllConfigStrategy::FractionalNotLess => {
                         // Calculate FRACN
-                        let mut pll_x_fracn = calc_fracn(ref_x_ck as f32, pll_x_n as f32, pll_x as f32, output as f32);
+                        let mut pll_x_fracn = calc_fracn(ref_x_ck, pll_x_n, pll_x, output);
                         // Round up instead of down for FractionalNotLess
                         pll_x_fracn += 1;
                         //RCC_PLL1FRACR
@@ -328,10 +328,10 @@ macro_rules! pll_setup {
 /// pll_n - Integer-N part of the divider
 /// pll_p - P-divider
 /// output - Wanted output frequency
-fn calc_fracn(ref_clk: f32, pll_n: f32, pll_p: f32, output: f32) -> u16 {
+fn calc_fracn(ref_clk: u32, pll_n: u32, pll_p: u32, output: u32) -> u16 {
     // VCO output frequency = Fref1_ck x (DIVN1 + (FRACN1 / 2^13)),
-    let pll_fracn = FRACN_DIVISOR * (((output * pll_p) / ref_clk) - pll_n);
-    assert!(pll_fracn >= 0.0);
+    let pll_fracn = FRACN_DIVISOR
+        * (((output as u64 * pll_p as u64) / ref_clk as u64) - pll_n as u64);
     assert!(pll_fracn <= FRACN_MAX);
     // Rounding down by casting gives up the lowest without going over
     pll_fracn as u16
@@ -363,7 +363,7 @@ fn calc_ck_div(
 /// pll_n - Integer-N part of the divider
 /// pll_fracn - Fractional-N part of the divider
 fn calc_vco_ck(ref_ck: u32, pll_n: u32, pll_fracn: u16) -> u32 {
-    (ref_ck as f32 * (pll_n as f32 + (pll_fracn as f32 / FRACN_DIVISOR))) as u32
+    (ref_ck as u64 * (pll_n as u64 + (pll_fracn as u64 / FRACN_DIVISOR))) as u32
 }
 
 impl Rcc {
@@ -708,12 +708,7 @@ mod tests {
 
         // Feedback divider. Integer only
         let pll_x_n = vco_ck_target / ref_x_ck;
-        let pll_x_fracn = calc_fracn(
-            input as f32,
-            pll_x_n as f32,
-            pll_x as f32,
-            output as f32,
-        ) + 1;
+        let pll_x_fracn = calc_fracn(input, pll_x_n, pll_x, output) + 1;
         println!("FRACN Divider {}", pll_x_fracn);
         // Resulting achieved vco_ck
         let vco_ck_achieved = calc_vco_ck(ref_x_ck, pll_x_n, pll_x_fracn);
